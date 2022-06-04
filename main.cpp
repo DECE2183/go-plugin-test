@@ -2,37 +2,29 @@
 
 #include "plugin.hpp"
 
+void _host_cout(const char *str)
+{
+  std::cout << str << std::endl;
+}
+
+interface_t init_interface = {
+  .host_cout = _host_cout
+};
+
+
 int main()
 {
-  plugin pl_printtime("printtime");
+  plugin pl_printtime(init_interface, "printtime");
   try
   {
     pl_printtime.compile();
-  }
-  catch (const std::exception &e)
-  {
-    std::cout << e.what() << std::endl;
-    return 4;
-  }
-
-  try
-  {
     pl_printtime.load();
-  }
-  catch (const std::exception &e)
-  {
-    std::cout << e.what() << std::endl;
-    return 6;
-  }
-
-  try
-  {
     pl_printtime.execute();
   }
   catch (const std::exception &e)
   {
     std::cout << e.what() << std::endl;
-    return 8;
+    return 1;
   }
 
   pl_printtime.unload();
