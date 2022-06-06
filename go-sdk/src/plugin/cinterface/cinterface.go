@@ -1,12 +1,9 @@
 package cinterface
 
 /*
-#ifndef _C_INTERFACE_
-#define _C_INTERFACE_
-
 typedef struct {
   void (*host_cout)(const char *str);
-} funcs_decription_t;
+} interface_t;
 
 static void (*host_cout_func)(const char *str);
 static inline void HostCout(const char *str)
@@ -15,19 +12,29 @@ static inline void HostCout(const char *str)
   host_cout_func(str);
 }
 
-static inline void InitFuncs(int *arg_ptr)
+static inline void InitInterface(int *arg_ptr)
 {
-  funcs_decription_t *funcs = (funcs_decription_t *)arg_ptr;
-  host_cout_func = funcs->host_cout;
+  interface_t *interface = (interface_t *)arg_ptr;
+  host_cout_func = interface->host_cout;
 }
-
-#endif // _C_INTERFACE_
 */
 import "C"
 
-//export init_interface
-func init_interface(addr *C.int) {
-  C.InitFuncs(addr)
+import (
+  "strconv"
+)
+
+var Hashsum string = "0"
+
+//export initInterface
+func initInterface(addr *C.int) {
+  C.InitInterface(addr)
+}
+
+//export getHashsum
+func getHashsum() C.ulonglong {
+  sum, _ := strconv.ParseUint(Hashsum, 10, 64)
+  return C.ulonglong(sum)
 }
 
 

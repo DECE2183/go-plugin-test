@@ -1,6 +1,7 @@
 package main
 
 import (
+  "fmt"
   "plugin/cinterface"
   "C"
 )
@@ -15,6 +16,7 @@ func Exec() {
   // fmt.Printf("Time: %s\n", time.Now())
   // fmt.Printf("Func addr in go: %d\n", C.get_host_cout())
   // C.host_cout(C.CString(time.Now().String()))
+  cinterface.HostCout(fmt.Sprintf("My hash: %s", cinterface.Hashsum))
   cinterface.HostCout(GetTime())
 }
 

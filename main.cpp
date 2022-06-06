@@ -17,8 +17,9 @@ int main()
   plugin pl_printtime(init_interface, "printtime");
   try
   {
-    pl_printtime.compile();
-    pl_printtime.load();
+    // pl_printtime.compile();
+    // pl_printtime.load();
+    pl_printtime.autoload();
     pl_printtime.execute();
   }
   catch (const std::exception &e)
@@ -27,7 +28,18 @@ int main()
     return 1;
   }
 
-  pl_printtime.unload();
+  std::cout << "One more time" << std::endl;
+  try
+  {
+    // pl_printtime.unload();
+    // pl_printtime.autoload();
+    pl_printtime.execute();
+  }
+  catch (const std::exception &e)
+  {
+    std::cout << e.what() << std::endl;
+    return 1;
+  }
 
   return 0;
 }

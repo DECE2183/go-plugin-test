@@ -3,8 +3,11 @@
 #include <string>
 #include <filesystem>
 #include <iostream>
-//#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <stdlib.h>
+
+#include "crc64.hpp"
 
 #if _WIN32
 #include <windows.h>
@@ -40,10 +43,16 @@ class plugin
 {
 public:
   plugin(const interface_t &interface_ptr, const std::string &name) :
-    _interface(&interface_ptr), _compiled(false), _loaded(false), _name(name)
+    _interface(&interface_ptr), _loaded(false), _name(name)
   {
     _path_to_source = plugins_src_path + path_sep + _name;
     _path_to_binary = plugins_bin_path + path_sep + _name + ".lib";
+    crc64::generate();
+  }
+
+  ~plugin()
+  {
+    unload();
   }
 
   void compile()
@@ -54,7 +63,11 @@ public:
     setenv("GOROOT", go_sdk_path.c_str(), true);
     setenv("GOPATH", plugins_path.c_str(), true);
 
-    std::string cmd = "cd " + _path_to_source + " && go build -o " + _path_to_binary + " -buildmode c-shared .";
+    uint64_t hashsum = calc_hash(_path_to_source);
+
+    std::string cmd = "cd \"" + _path_to_source + "\" && go build -o \"" +
+        _path_to_binary + "\" -ldflags=\"-X \'plugin/cinterface.Hashsum=" +
+        std::to_string(hashsum) + "\'\" -buildmode c-shared . ";
 
     std::cout << "Building plugin \"" << _name << "\"..." << std::endl;
     std::cout << cmd << std::endl;
@@ -63,36 +76,78 @@ public:
       throw std::runtime_error("Compilation error");
 
     std::cout << "Build done." << std::endl;
-    _compiled = true;
+  }
+
+  void autoload()
+  {
+    if (!fs::exists(_path_to_binary))
+    {
+      try
+      {
+        compile();
+        load();
+      }
+      catch (std::runtime_error &e)
+      {
+        throw e;
+      }
+    }
+    else
+    {
+      load();
+      uint64_t pl_hash = _get_hashsum();
+      uint64_t src_hash = calc_hash(_path_to_source, 0);
+      if (pl_hash != src_hash)
+      {
+        try
+        {
+          compile();
+          unload();
+          load();
+        }
+        catch (std::runtime_error &e)
+        {
+          std::cout << "Error: ";
+          throw e;
+        }
+      }
+    }
   }
 
   void load()
   {
-    if (!_compiled)
+    if (!fs::exists(_path_to_binary) || fs::is_directory(_path_to_binary))
       throw std::runtime_error("Plugin \"" + _name + "\" is not compiled");
     if (_loaded)
       throw std::runtime_error("Plugin \"" + _name + "\" already loaded");
 
 #if _WIN32
-    auto lib_hadle = LoadLibrary(_path_to_binary.c_str());
-    if (lib_hadle == nullptr)
+    _lib_ptr = LoadLibrary(_path_to_binary.c_str());
+    if (_lib_ptr == nullptr)
       throw std::runtime_error("Cant load plugin \"" + _name + "\"");
 
-    _lib_ptr = lib_hadle;
-    _init_interface = (void (*)(int *interface_addr)) GetProcAddress(lib_hadle, "init_interface");
-    _get_info = (void (*)()) GetProcAddress(lib_hadle, "GetInfo");
-    _execute = (void (*)()) GetProcAddress(lib_hadle, "Exec");
+    _init_interface = (void (*)(int *interface_addr)) GetProcAddress((HMODULE)_lib_ptr, "initInterface");
+    _get_hashsum = (uint64_t (*)()) GetProcAddress((HMODULE)_lib_ptr, "getHashsum");
+    _get_info = (void (*)()) GetProcAddress((HMODULE)_lib_ptr, "GetInfo");
+    _execute = (void (*)()) GetProcAddress((HMODULE)_lib_ptr, "Exec");
 #else
+    _lib_ptr = dlopen(_path_to_binary.c_str(), RTLD_LAZY);
+    if (_lib_ptr == nullptr)
+      throw std::runtime_error("Cant load plugin \"" + _name + "\": " + dlerror());
 
+    _init_interface = (void (*)(int *interface_addr)) dlsym(_lib_ptr, "initInterface");
+    _get_hashsum = (uint64_t (*)()) dlsym(_lib_ptr, "getHashsum");
+    _get_info = (void (*)()) dlsym(_lib_ptr, "GetInfo");
+    _execute = (void (*)()) dlsym(_lib_ptr, "Exec");
 #endif
 
-    if (_init_interface == nullptr)
+    if (_init_interface == nullptr || _get_hashsum == nullptr)
       throw std::runtime_error("Plugin \"" + _name + "\" has no propper interface");
 
     _init_interface((int *)_interface);
 
     if (_get_info == nullptr || _execute == nullptr)
-      throw std::runtime_error("Cant get plugin \"" + _name + "\" interface");
+      throw std::runtime_error("Cant get plugin \"" + _name + "\" base methods");
 
     _loaded = true;
   }
@@ -103,10 +158,18 @@ public:
       throw std::runtime_error("Plugin \"" + _name + "\" not loaded");
 
 #if _WIN32
-    FreeLibrary((HINSTANCE) _lib_ptr);
+    bool free_succ = FreeLibrary((HMODULE)_lib_ptr);
 #else
-
+    dlclose(_lib_ptr);
 #endif
+
+    _lib_ptr = nullptr;
+    _init_interface = nullptr;
+    _get_hashsum = nullptr;
+    _get_info = nullptr;
+    _execute = nullptr;
+
+    _loaded = false;
   }
 
   void execute()
@@ -127,16 +190,37 @@ public:
 private:
   void *_lib_ptr;
 
-  void (*_init_interface)(int *interface_addr);
-  void (*_get_info)();
-  void (*_execute)();
+  void     (*_init_interface)(int *interface_addr);
+  uint64_t (*_get_hashsum)();
+  void     (*_get_info)();
+  void     (*_execute)();
 
   std::string _name;
   std::string _path_to_source;
   std::string _path_to_binary;
 
-  bool _compiled;
   bool _loaded;
 
   const interface_t *_interface;
+
+  uint64_t calc_hash(const std::string &path, uint64_t sum = 0)
+  {
+    if (fs::is_directory(path))
+    {
+      for (const auto &entry : fs::directory_iterator(path))
+      {
+        sum = calc_hash(entry.path().string(), sum);
+      }
+    }
+    else
+    {
+      std::ifstream r_file(path);
+      std::stringstream buffer;
+      buffer << r_file.rdbuf();
+      r_file.close();
+      sum = crc64::calc(buffer.str(), sum);
+    }
+
+    return sum;
+  }
 };
